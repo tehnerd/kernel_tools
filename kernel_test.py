@@ -394,11 +394,11 @@ slink /bin/xzcat busybox 777 0 0
 slink /bin/yes busybox 777 0 0
 slink /bin/zcat busybox 777 0 0
 slink /bin/zcip busybox 777 0 0
-file /init {initrd_root}/init 744 0 0
+
+file /init {initrd_root}/init 755 0 0
 '''
 
-INIT_FILE = '''
-#!/bin/sh
+INIT_FILE = '''#!/bin/sh
 mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t configfs none /sys/kernel/config
@@ -426,6 +426,10 @@ mount -t tmpfs none /dev/shm
 
 # Test setup commands here:
 # insmod /lib/modules/$(uname -r)/kernel/...
+# to attach shared files:
+# insmod /modules/9pnet.ko
+# insmod /modules/9pnet_virtio.ko
+# insmod /modules/virtio_blk.ko
 
 exec /bin/sh -i
 '''
@@ -433,9 +437,11 @@ exec /bin/sh -i
 QEMU_LINE = '''
 qemu-kvm -smp 4 -boot c -m 2048 -k en-us -nographic -serial mon:stdio \
   -drive file=<path to disk>,if=virtio \
-  -kernel <path to vmlinuz> -initrd {} \
+  -kernel {}/arch/x86_64/boot/bzImage -initrd {} \
   -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::10022-:22 \
-  -append "root=/dev/sda1 ipv6.autoconf=0 biosdevname=0 net.ifnames=0 fsck.repair=yes pcie_pme=nomsi console=tty0 console=ttyS0,57600 security=selinux selinux=1 enforcing=0"
+  -append "root=/dev/sda1 ipv6.autoconf=0 biosdevname=0 net.ifnames=0 fsck.repair=yes pcie_pme=nomsi console=tty0 console=ttyS0,57600 security=selinux selinux=1 enforcing=0" \
+  -fsdev local,security_model=passthrough,id=fsdev1,path=/home/tehnerd/projects/ \
+  -device virtio-9p-pci,id=fs1,fsdev=fsdev1,mount_tag=hostshare1
 '''
 
 def parse_args():
@@ -444,20 +450,53 @@ def parse_args():
             help="Path to linux src")
     parser.add_argument("--initramfs", "-i", default="/tmp/initramfs.cpio",
             help="where to save initramfs")
+    parser.add_argument("--modules", action='store_true',
+            help="add  modules from kernel dir")
+    parser.add_argument("--module_name", default="*",
+            help="name of the module to add")
     args = parser.parse_args()
     return args
 
+
+def run_cmd(cmd):
+    tmp_bash_file = tempfile.NamedTemporaryFile()
+    with open(tmp_bash_file.name, "w") as fd:
+        fd.write(cmd)
+    output = subprocess.check_output("bash -x {}".format(tmp_bash_file.name).split())
+    return output
+
+
+
+def get_modules(args):
+    modules_dict = {}
+    cmd = 'find {} -name "{}.ko" '.format(args.linux, args.module_name)
+    output = run_cmd(cmd)
+    for module in output.decode().split("\n"):
+        module_name = module.split(args.linux)
+        if len(module_name) < 2:
+            continue
+        modules_dict[module_name[1]] = module
+    return modules_dict
 
 def create_initramfs_cfg(args):
     initdir = tempfile.TemporaryDirectory()
     busybox = "/usr/sbin/busybox"
     if not os.path.exists(busybox):
         raise Exception(f"Can't find busybox at {busybox}")
+    if args.modules:
+        modules_dict = get_modules(args)
+    else:
+        modules_dict = {}
     with open(os.path.join(initdir.name, "initrd_cfg"), "w") as fd:
         config = INITRD_CFG.format(
                 busybox_loc = busybox,
                 initrd_root = initdir.name)
         fd.write(config)
+        for module in modules_dict:
+            cfg_line = "\nfile /modules/{} {} 755 0 0".format(
+                    os.path.basename(module),
+                    modules_dict[module])
+            fd.write(cfg_line)
     with open(os.path.join(initdir.name, "init"), "w") as fd:
         init = INIT_FILE
         fd.write(init)
@@ -470,10 +509,7 @@ def create_initramfs(args, initdir):
             linux_dir = args.linux,
             initramfs_cfg_dir = initdir.name,
             initramfs = args.initramfs)
-    tmp_bash_file = tempfile.NamedTemporaryFile()
-    with open(tmp_bash_file.name, "w") as fd:
-        fd.write(cmd)
-    output = subprocess.check_output("bash -x {}".format(tmp_bash_file.name).split())
+    output = run_cmd(cmd)
     print("initramfs created: {}".format(output))
 
 
@@ -485,7 +521,7 @@ def main():
     initdir = create_initramfs_cfg(args)
     create_initramfs(args, initdir)
     print("now you can run vm with this line:")
-    print(QEMU_LINE.format(args.initramfs))
+    print(QEMU_LINE.format(args.linux, args.initramfs))
 
 
 

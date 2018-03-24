@@ -430,13 +430,13 @@ mount -t tmpfs none /dev/shm
 # insmod /modules/9pnet.ko
 # insmod /modules/9pnet_virtio.ko
 # insmod /modules/virtio_blk.ko
-
+# mount -t 9p -o trans=virtio,version=9p2000.L hostshare1 /tmp/host_files
 exec /bin/sh -i
 '''
 
 QEMU_LINE = '''
 qemu-kvm -smp 4 -boot c -m 2048 -k en-us -nographic -serial mon:stdio \
-  -drive file=<path to disk>,if=virtio \
+  -drive file={},if=virtio \
   -kernel {}/arch/x86_64/boot/bzImage -initrd {} \
   -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::10022-:22 \
   -append "root=/dev/sda1 ipv6.autoconf=0 biosdevname=0 net.ifnames=0 fsck.repair=yes pcie_pme=nomsi console=tty0 console=ttyS0,57600 security=selinux selinux=1 enforcing=0" \
@@ -454,6 +454,8 @@ def parse_args():
             help="add  modules from kernel dir")
     parser.add_argument("--module_name", default="*",
             help="name of the module to add")
+    parser.add_argument("--disk", default="/path/to/disk/image",
+            help="path to disk image file")
     args = parser.parse_args()
     return args
 
@@ -521,7 +523,7 @@ def main():
     initdir = create_initramfs_cfg(args)
     create_initramfs(args, initdir)
     print("now you can run vm with this line:")
-    print(QEMU_LINE.format(args.linux, args.initramfs))
+    print(QEMU_LINE.format(args.disk, args.linux, args.initramfs))
 
 
 

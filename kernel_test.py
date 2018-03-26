@@ -431,8 +431,16 @@ mount -t tmpfs none /dev/shm
 # insmod /modules/9pnet_virtio.ko
 # insmod /modules/virtio_blk.ko
 # mount -t 9p -o trans=virtio,version=9p2000.L hostshare1 /tmp/host_files
+# to switch: exec switch_root /newroot /sbin/init
 exec /bin/sh -i
 '''
+
+DEFAULT_MODULES = [
+    "e1000",
+    "9pnet",
+    "9pnet_virtio",
+    "virtio_blk",
+]
 
 QEMU_LINE = '''
 qemu-kvm -smp 4 -boot c -m 2048 -k en-us -nographic -serial mon:stdio \
@@ -469,26 +477,25 @@ def run_cmd(cmd):
 
 
 
-def get_modules(args):
-    modules_dict = {}
-    cmd = 'find {} -name "{}.ko" '.format(args.linux, args.module_name)
+def get_module(linux, module_name, modules_dict):
+    cmd = 'find {} -name "{}.ko" '.format(linux, module_name)
     output = run_cmd(cmd)
     for module in output.decode().split("\n"):
-        module_name = module.split(args.linux)
+        module_name = module.split(linux)
         if len(module_name) < 2:
             continue
         modules_dict[module_name[1]] = module
-    return modules_dict
 
 def create_initramfs_cfg(args):
     initdir = tempfile.TemporaryDirectory()
     busybox = "/usr/sbin/busybox"
     if not os.path.exists(busybox):
         raise Exception(f"Can't find busybox at {busybox}")
+    modules_dict = {}
+    for module in DEFAULT_MODULES:
+        get_module(args.linux, module, modules_dict)
     if args.modules:
-        modules_dict = get_modules(args)
-    else:
-        modules_dict = {}
+        get_module(args.linux, args.module_name, modules_dict)
     with open(os.path.join(initdir.name, "initrd_cfg"), "w") as fd:
         config = INITRD_CFG.format(
                 busybox_loc = busybox,

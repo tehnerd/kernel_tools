@@ -443,7 +443,7 @@ DEFAULT_MODULES = [
 ]
 
 QEMU_LINE = '''
-qemu-kvm -smp 4 -boot c -m 2048 -k en-us -nographic -serial mon:stdio \
+{} -smp {} -boot c -m {} -k en-us -nographic -serial mon:stdio \
   -drive file={},if=virtio \
   -kernel {}/arch/x86_64/boot/bzImage -initrd {} \
   -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::10022-:22 \
@@ -464,6 +464,8 @@ def parse_args():
             help="name of the module to add")
     parser.add_argument("--disk", default="/path/to/disk/image",
             help="path to disk image file")
+    parser.add_argument("--vm", action='store_true',
+            help="use qemu instead of kvm (e.g. nested vm)")
     args = parser.parse_args()
     return args
 
@@ -478,7 +480,7 @@ def run_cmd(cmd):
 
 
 def get_module(linux, module_name, modules_dict):
-    cmd = 'find {} -name "{}.ko" '.format(linux, module_name)
+    cmd = f'find {linux} -name "{module_name}.ko" '
     output = run_cmd(cmd)
     for module in output.decode().split("\n"):
         module_name = module.split(linux)
@@ -490,7 +492,9 @@ def create_initramfs_cfg(args):
     initdir = tempfile.TemporaryDirectory()
     busybox = "/usr/sbin/busybox"
     if not os.path.exists(busybox):
-        raise Exception(f"Can't find busybox at {busybox}")
+        busybox = "/bin/busybox"
+        if not os.path.exists(busybox):
+            raise Exception(f"Can't find busybox at {busybox}")
     modules_dict = {}
     for module in DEFAULT_MODULES:
         get_module(args.linux, module, modules_dict)
@@ -519,7 +523,7 @@ def create_initramfs(args, initdir):
             initramfs_cfg_dir = initdir.name,
             initramfs = args.initramfs)
     output = run_cmd(cmd)
-    print("initramfs created: {}".format(output))
+    print(f"initramfs created: {output}")
 
 
 
@@ -530,7 +534,16 @@ def main():
     initdir = create_initramfs_cfg(args)
     create_initramfs(args, initdir)
     print("now you can run vm with this line:")
-    print(QEMU_LINE.format(args.disk, args.linux, args.initramfs))
+    if args.vm:
+        qemu_cmd = "qemu-system-x86_64"
+        cpu = 1
+        mem = 512
+    else:
+        qemu_cmd = "qemu-kvm"
+        cpu = 4
+        mem = 2048
+    print(QEMU_LINE.format(
+            qemu_cmd, cpu, mem, args.disk, args.linux, args.initramfs))
 
 
 

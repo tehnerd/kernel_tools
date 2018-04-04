@@ -432,7 +432,14 @@ mount -t tmpfs none /dev/shm
 # insmod /modules/virtio_blk.ko
 # mount -t 9p -o trans=virtio,version=9p2000.L hostshare1 /tmp/host_files
 # to switch: exec switch_root /newroot /sbin/init
-exec /bin/sh -i
+{}
+'''
+
+INTERACTIVE_BOOT = "exec /bin/sh -i"
+FAST_BOOT = '''
+mkdir /rd/
+mount /dev/vda1 /rd/
+exec switch_root /rd/ /sbin/init
 '''
 
 DEFAULT_MODULES = [
@@ -448,8 +455,9 @@ QEMU_LINE = '''
   -kernel {}/arch/x86_64/boot/bzImage -initrd {} \
   -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::10022-:22 \
   -append "root=/dev/sda1 ipv6.autoconf=0 biosdevname=0 net.ifnames=0 fsck.repair=yes pcie_pme=nomsi console=tty0 console=ttyS0,57600 security=selinux selinux=1 enforcing=0" \
-  -fsdev local,security_model=passthrough,id=fsdev1,path=/home/tehnerd/projects/ \
-  -device virtio-9p-pci,id=fs1,fsdev=fsdev1,mount_tag=hostshare1
+  -fsdev local,security_model=passthrough,id=fsdev1,path={} \
+  -device virtio-9p-pci,id=fs1,fsdev=fsdev1,mount_tag=hostshare1 \
+  {}
 '''
 
 def parse_args():
@@ -466,6 +474,12 @@ def parse_args():
             help="path to disk image file")
     parser.add_argument("--vm", action='store_true',
             help="use qemu instead of kvm (e.g. nested vm)")
+    parser.add_argument("--local_dir", type=str, default="/home/tehnerd/",
+            help="location of 9p mapped directory")
+    parser.add_argument("--fast", action='store_true',
+            help="fast boot into VM image")
+    parser.add_argument("--br", action='store_true',
+            help="spawn vm w/ 2nd interface for net tests")
     args = parser.parse_args()
     return args
 
@@ -511,7 +525,11 @@ def create_initramfs_cfg(args):
                     modules_dict[module])
             fd.write(cfg_line)
     with open(os.path.join(initdir.name, "init"), "w") as fd:
-        init = INIT_FILE
+        if args.fast:
+            init_suffix = FAST_BOOT
+        else:
+            init_suffix = INTERACTIVE_BOOT
+        init = INIT_FILE.format(init_suffix)
         fd.write(init)
     return initdir
 
@@ -542,8 +560,14 @@ def main():
         qemu_cmd = "qemu-kvm"
         cpu = 4
         mem = 2048
+    if args.br:
+        brcmd = ""
+    else:
+        brcmd = "-device e1000,netdev=net1 -netdev tap,id=net1"
+        qemu_cmd = "sudo " + qemu_cmd
     print(QEMU_LINE.format(
-            qemu_cmd, cpu, mem, args.disk, args.linux, args.initramfs))
+            qemu_cmd, cpu, mem, args.disk, args.linux, args.initramfs,
+            args.local_dir, brcmd))
 
 
 

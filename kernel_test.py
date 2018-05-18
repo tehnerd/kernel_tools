@@ -437,6 +437,10 @@ mount -t tmpfs none /dev/shm
 
 INTERACTIVE_BOOT = "exec /bin/sh -i"
 FAST_BOOT = '''
+for module in $(ls /modules/)
+do
+    insmod /modules/${module}
+done
 mkdir /rd/
 mount /dev/vda1 /rd/
 exec switch_root /rd/ /sbin/init
@@ -446,7 +450,7 @@ DEFAULT_MODULES = [
     "e1000",
     "9pnet",
     "9pnet_virtio",
-    "virtio_blk",
+    "*virtio*",
 ]
 
 QEMU_LINE = '''
@@ -474,6 +478,8 @@ def parse_args():
             help="path to disk image file")
     parser.add_argument("--vm", action='store_true',
             help="use qemu instead of kvm (e.g. nested vm)")
+    parser.add_argument("--small", action='store_true',
+            help="use less memory (e.g. runs on vm)")
     parser.add_argument("--local_dir", type=str, default="/home/tehnerd/",
             help="location of 9p mapped directory")
     parser.add_argument("--fast", action='store_true',
@@ -481,6 +487,8 @@ def parse_args():
     parser.add_argument("--br", action='store_true',
             help="spawn vm w/ 2nd interface for net tests")
     args = parser.parse_args()
+    if args.vm:
+        args.small = True
     return args
 
 
@@ -552,19 +560,21 @@ def main():
     initdir = create_initramfs_cfg(args)
     create_initramfs(args, initdir)
     print("now you can run vm with this line:")
+    if args.small:
+        mem = 512
+        cpu = 1
+    else:
+        mem = 2048
+        cpu = 4
     if args.vm:
         qemu_cmd = "qemu-system-x86_64"
-        cpu = 1
-        mem = 512
     else:
         qemu_cmd = "qemu-kvm"
-        cpu = 4
-        mem = 2048
     if args.br:
-        brcmd = ""
-    else:
         brcmd = "-device e1000,netdev=net1 -netdev tap,id=net1"
         qemu_cmd = "sudo " + qemu_cmd
+    else:
+        brcmd = ""
     print(QEMU_LINE.format(
             qemu_cmd, cpu, mem, args.disk, args.linux, args.initramfs,
             args.local_dir, brcmd))
